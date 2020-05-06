@@ -71,6 +71,9 @@ General Order Placement and eCommerce Usage
                 <set field="salesChannelEnumId" from="salesChannelEnumId ?: productStore?.defaultSalesChannelEnumId"/>
                 <set field="facilityId" from="facilityId ?: productStore?.inventoryFacilityId"/>
                 <set field="reservationAutoEnumId" from="reservationAutoEnumId ?: productStore?.reservationAutoEnumId"/>
+                <set field="disablePromotions" from="disablePromotions ?: productStore?.defaultDisablePromotions"/>
+                <set field="disableShippingCalc" from="disableShippingCalc ?: productStore?.defaultDisableShippingCalc"/>
+                <set field="disableTaxCalc" from="disableTaxCalc ?: productStore?.defaultDisableTaxCalc"/>
 
                 <!-- Customer - Bill To: set from store if set there, special case for drop-ship channel stores -->
                 <entity-find entity-name="mantle.product.store.ProductStoreParty" list="storeBillToList">
@@ -584,6 +587,7 @@ General Order Placement and eCommerce Usage
                     <entity-find entity-name="mantle.order.OrderHeaderAndPart" list="existingOrderList">
                         <econdition field-name="statusId" value="OrderOpen"/>
                         <econdition field-name="customerPartyId"/>
+                        <econdition field-name="vendorPartyId" ignore-if-empty="true"/>
                         <econdition field-name="productStoreId" ignore-if-empty="true"/>
                         <select-field field-name="orderId"/><select-field field-name="orderPartSeqId"/>
                         <order-by field-name="-entryDate"/><!-- get most recent open order -->
@@ -591,6 +595,9 @@ General Order Placement and eCommerce Usage
                     <if condition="existingOrderList">
                         <set field="orderId" from="existingOrderList[0].orderId"/>
                         <set field="orderPartSeqId" from="existingOrderList[0].orderPartSeqId"/>
+
+                        <entity-find-one entity-name="mantle.order.OrderHeader" value-field="orderHeader"/>
+                        <entity-find-one entity-name="mantle.order.OrderPart" value-field="orderPart"/>
                     </if>
                 </if>
                 <!-- no existing open (cart) order found? create one -->
@@ -616,7 +623,9 @@ General Order Placement and eCommerce Usage
                 <set field="unitAmount" from="priceMap.price"/>
                 <set field="unitListPrice" from="priceMap.listPrice"/>
                 <set field="isModifiedPrice" value="N"/>
+                <log message="OrderProductQuantity Calculated Order ${orderId}:${orderPartSeqId} Product ${productId} calculated unitAmount ${unitAmount} unitListPrice ${unitListPrice} productStoreId ${productStoreId} customerPartyId ${customerPartyId} vendorPartyId ${vendorPartyId}"/>
             </then><else>
+                <log message="OrderProductQuantity Modified Order ${orderId}:${orderPartSeqId} Product ${productId} manual unitAmount ${unitAmount}"/>
                 <set field="isModifiedPrice" value="Y"/>
             </else></if>
 
@@ -917,6 +926,7 @@ General Order Placement and eCommerce Usage
             <parameter name="orderPartSeqId"/>
             <parameter name="statusId" required="true"/>
             <parameter name="placedDate" type="Timestamp"/>
+            <parameter name="approvedDate" type="Timestamp"/>
         </in-parameters>
         <out-parameters><parameter name="oldStatusId"/><parameter name="statusChanged" type="Boolean"/></out-parameters>
         <actions>
@@ -933,6 +943,7 @@ General Order Placement and eCommerce Usage
             <!-- only update header status if no order part specified, or set status if all parts now same, etc like complete#OrderPart does -->
             <set field="updateMap" from="[orderId:orderId, statusId:statusId]"/>
             <if condition="placedDate != null &amp;&amp; orderHeader.placedDate == null"><script>updateMap.put('placedDate', placedDate)</script></if>
+            <if condition="approvedDate != null &amp;&amp; orderHeader.approvedDate == null"><script>updateMap.put('approvedDate', approvedDate)</script></if>
             <if condition="orderPartSeqId"><then>
                 <set field="allPartsSame" from="true"/>
                 <entity-find entity-name="mantle.order.OrderPart" list="allPartList"><econdition field-name="orderId"/></entity-find>
@@ -1039,6 +1050,9 @@ General Order Placement and eCommerce Usage
     <service verb="approve" noun="Order">
         <description>For manual order approval, requires ORDER_APPROVE permission.</description>
         <implements service="mantle.order.OrderServices.change#OrderStatusInterface"/>
+        <in-parameters>
+            <parameter name="approvedDate" type="Timestamp" default="ec.user.nowTimestamp"/>
+        </in-parameters>
         <actions>
             <if condition="!ec.user.hasPermission('ORDER_APPROVE')">
                 <return error="true" message="Order Approve permission required"/></if>
@@ -1117,7 +1131,8 @@ General Order Placement and eCommerce Usage
                 </entity-find>
 
                 <if condition="!checkOut.approveWarnings &amp;&amp; !statusHistoryList"><then>
-                    <service-call name="mantle.order.OrderServices.update#OrderStatus" in-map="[orderId:orderId, statusId:'OrderApproved']"/>
+                    <service-call name="mantle.order.OrderServices.update#OrderStatus"
+                            in-map="[orderId:orderId, statusId:'OrderApproved', approvedDate:ec.user.nowTimestamp]"/>
                 </then><else>
                     <log message="Not auto-approving Order ${orderId} status history: ${statusHistoryList*.auditHistorySeqId}, warnings: ${checkOut.approveWarnings}"/>
                 </else></if>
